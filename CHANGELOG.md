@@ -1,5 +1,7 @@
 ## 1.5.2
 
+- Add connection-local runtime autojoin control so bouncer clients can disable automatic joins after capability discovery.
+
 - Add connection-local runtime flood protection control on sender clones.
 - Wake delayed outgoing messages when protection is disabled; restore the original configured threshold when enabled.
 - Add TCP integration coverage for queued delivery, re-enabling, connection isolation, and configured-zero behavior.
