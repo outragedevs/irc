@@ -1145,7 +1145,8 @@ impl Future for Outgoing {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = &mut *self;
         this.flood_control.waker.register(cx.waker());
-        if !this.flood_control.enabled.load(Ordering::Acquire) {
+        let flood_protection_enabled = this.flood_control.enabled.load(Ordering::Acquire);
+        if !flood_protection_enabled {
             this.delay = None;
             this.penalty = 0;
             this.last_penalty_check = tokio::time::Instant::now();
@@ -1181,9 +1182,7 @@ impl Future for Outgoing {
             match this.stream.poll_recv(cx) {
                 Poll::Ready(Some(message)) => {
                     // Apply penalty-based throttle if enabled.
-                    if this.penalty_threshold > 0
-                        && this.flood_control.enabled.load(Ordering::Acquire)
-                    {
+                    if this.penalty_threshold > 0 && flood_protection_enabled {
                         let cmd_cost = Self::command_penalty(&message.command);
                         if cmd_cost > 0 {
                             let len_cost = Self::length_penalty(&message);
