@@ -99,3 +99,17 @@ async fn flood_bypass_is_connection_local_and_preserves_disabled_config() {
     limited.sender.set_flood_protection_enabled(false);
     limited.expect("still limited").await;
 }
+
+#[tokio::test]
+async fn latest_flood_state_wins_before_the_writer_runs() {
+    let mut wire = Wire::connect(1_000).await;
+    wire.send("initial delay");
+    wire.expect_delayed().await;
+    wire.sender.set_flood_protection_enabled(false);
+    wire.send("queued while disabled");
+    wire.sender.set_flood_protection_enabled(true);
+    wire.expect_delayed().await;
+    wire.sender.set_flood_protection_enabled(false);
+    wire.expect("initial delay").await;
+    wire.expect("queued while disabled").await;
+}

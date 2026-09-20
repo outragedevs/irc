@@ -960,7 +960,9 @@ impl FloodControl {
 }
 
 impl Sender {
-    #[doc = "Enable the configured flood limit, or bypass it and wake a delayed writer. Shared by all senders on this connection; enabling preserves a configured zero limit."]
+    #[doc = "Set the connection's asynchronously observed flood-protection state."]
+    #[doc = "All sender clones share this state. Rapid updates may coalesce: the writer uses the latest state when it runs, including for already-queued messages. This is not an ordered queue command or a way to bracket an unthrottled burst between two calls."]
+    #[doc = "Disabling wakes a delayed writer; when the writer observes disabling, it clears the delay and penalty. Enabling restores the configured threshold, including an explicitly unlimited zero threshold."]
     pub fn set_flood_protection_enabled(&self, enabled: bool) {
         self.flood_control.enabled.store(enabled, Ordering::Release);
         self.flood_control.waker.wake();
