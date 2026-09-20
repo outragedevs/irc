@@ -1,12 +1,12 @@
 [package]
 name = "irc-repartee"
-version = "1.5.1"
+version = "1.5.2"
 authors = ["Ariel Weiss <aweiss@hey.com>"]
 edition = "2018"
 rust-version = "1.80"
 description = "the irc crate – usable, async IRC for Rust. Temporary fork for repartee IRC client (bind_address, immediate flush, rustls fix, flood protection, batched autojoin, local_addr, outgoing task handle)."
 readme = "README.md"
-repository = "https://github.com/kofany/irc"
+repository = "https://github.com/outragedevs/irc"
 license = "MPL-2.0"
 keywords = ["irc", "client", "thread-safe", "async", "tokio"]
 categories = ["asynchronous", "network-programming"]
@@ -100,6 +100,7 @@ tokio = { version = "1.27.0", features = [
     "macros",
     "net",
     "time",
+    "io-util",
 ] }
 
 

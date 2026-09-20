@@ -64,7 +64,10 @@ use std::{
     fmt,
     path::Path,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     task::{Context, Poll},
 };
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -719,7 +722,7 @@ impl ClientState {
             return;
         }
 
-        for (_, vec) in self.chanlists.write().iter_mut() {
+        for vec in self.chanlists.write().values_mut() {
             if let Some(n) = vec.iter().position(|x| x.get_nickname() == old_nick) {
                 let new_entry = User::new(new_nick);
                 vec[n] = new_entry;
@@ -938,9 +941,33 @@ impl ClientState {
 #[derive(Debug, Clone)]
 pub struct Sender {
     tx_outgoing: UnboundedSender<Message>,
+    flood_control: Arc<FloodControl>,
+}
+
+#[derive(Debug)]
+struct FloodControl {
+    enabled: AtomicBool,
+    waker: futures_util::task::AtomicWaker,
+}
+
+impl FloodControl {
+    fn new() -> Self {
+        Self {
+            enabled: AtomicBool::new(true),
+            waker: futures_util::task::AtomicWaker::new(),
+        }
+    }
 }
 
 impl Sender {
+    #[doc = "Set the connection's asynchronously observed flood-protection state."]
+    #[doc = "All sender clones share this state. Rapid updates may coalesce: the writer uses the latest state when it runs, including for already-queued messages. This is not an ordered queue command or a way to bracket an unthrottled burst between two calls."]
+    #[doc = "Disabling wakes a delayed writer; when the writer observes disabling, it clears the delay and penalty. Enabling restores the configured threshold, including an explicitly unlimited zero threshold."]
+    pub fn set_flood_protection_enabled(&self, enabled: bool) {
+        self.flood_control.enabled.store(enabled, Ordering::Release);
+        self.flood_control.waker.wake();
+    }
+
     /// Send a single message to the unbounded queue.
     pub fn send<M: Into<Message>>(&self, msg: M) -> error::Result<()> {
         Ok(self.tx_outgoing.send(msg.into())?)
@@ -974,6 +1001,7 @@ pub struct Outgoing {
     penalty: u64,
     /// Threshold above which messages are delayed. 0 = disabled.
     penalty_threshold: u64,
+    flood_control: Arc<FloodControl>,
     /// Last time penalty was drained.
     last_penalty_check: tokio::time::Instant,
     /// Active delay future for throttling.
@@ -1116,6 +1144,13 @@ impl Future for Outgoing {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = &mut *self;
+        this.flood_control.waker.register(cx.waker());
+        let flood_protection_enabled = this.flood_control.enabled.load(Ordering::Acquire);
+        if !flood_protection_enabled {
+            this.delay = None;
+            this.penalty = 0;
+            this.last_penalty_check = tokio::time::Instant::now();
+        }
 
         if ready!(this.poll_priority_message(cx))? {
             cx.waker().wake_by_ref();
@@ -1147,7 +1182,7 @@ impl Future for Outgoing {
             match this.stream.poll_recv(cx) {
                 Poll::Ready(Some(message)) => {
                     // Apply penalty-based throttle if enabled.
-                    if this.penalty_threshold > 0 {
+                    if this.penalty_threshold > 0 && flood_protection_enabled {
                         let cmd_cost = Self::command_penalty(&message.command);
                         if cmd_cost > 0 {
                             let len_cost = Self::length_penalty(&message);
@@ -1251,7 +1286,11 @@ impl Client {
 
         let (sink, incoming) = conn.split();
 
-        let sender = Sender { tx_outgoing };
+        let flood_control = Arc::new(FloodControl::new());
+        let sender = Sender {
+            tx_outgoing,
+            flood_control: flood_control.clone(),
+        };
         let penalty_threshold = config.flood_penalty_threshold() as u64;
 
         Ok(Client {
@@ -1266,6 +1305,7 @@ impl Client {
                 buffered: None,
                 penalty: 0,
                 penalty_threshold,
+                flood_control,
                 last_penalty_check: tokio::time::Instant::now(),
                 delay: None,
             }),
@@ -1538,6 +1578,7 @@ mod test {
                 buffered: None,
                 penalty: 0,
                 penalty_threshold,
+                flood_control: std::sync::Arc::new(super::FloodControl::new()),
                 last_penalty_check: tokio::time::Instant::now(),
                 delay: None,
             },
