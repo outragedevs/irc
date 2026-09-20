@@ -572,6 +572,10 @@ impl ClientState {
                 self.send_nick_password()?;
                 self.send_umodes()?;
 
+                if !self.sender.autojoin_enabled.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+
                 // Batch autojoin: keyed channels first, then keyless (RFC 2812 §3.2.1)
                 let config = self.config();
                 let batches = Self::build_batched_joins(config.channels(), &config.channel_keys);
@@ -942,6 +946,7 @@ impl ClientState {
 pub struct Sender {
     tx_outgoing: UnboundedSender<Message>,
     flood_control: Arc<FloodControl>,
+    autojoin_enabled: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -960,6 +965,12 @@ impl FloodControl {
 }
 
 impl Sender {
+    #[doc = "Enable or disable automatic configured-channel joins and remembered-channel rejoins at the end of MOTD. Enabled by default; sender clones share the setting within one connection."]
+    #[doc = "Set this before the incoming stream processes RPL_ENDOFMOTD or ERR_NOMOTD. It does not retract messages already queued, send joins immediately when enabled, or block explicit JOIN commands. NickServ identification and user modes remain unaffected."]
+    pub fn set_autojoin_enabled(&self, enabled: bool) {
+        self.autojoin_enabled.store(enabled, Ordering::Release);
+    }
+
     #[doc = "Set the connection's asynchronously observed flood-protection state."]
     #[doc = "All sender clones share this state. Rapid updates may coalesce: the writer uses the latest state when it runs, including for already-queued messages. This is not an ordered queue command or a way to bracket an unthrottled burst between two calls."]
     #[doc = "Disabling wakes a delayed writer; when the writer observes disabling, it clears the delay and penalty. Enabling restores the configured threshold, including an explicitly unlimited zero threshold."]
@@ -1290,6 +1301,7 @@ impl Client {
         let sender = Sender {
             tx_outgoing,
             flood_control: flood_control.clone(),
+            autojoin_enabled: Arc::new(AtomicBool::new(true)),
         };
         let penalty_threshold = config.flood_penalty_threshold() as u64;
 
@@ -2618,3 +2630,6 @@ mod test {
         }
     }
 }
+
+#[cfg(test)]
+mod autojoin_tests;
